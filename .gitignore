@@ -4,7 +4,6 @@
 *.dll
 *.so
 *.dylib
-yt-audio-player
 
 # IDEs
 .idea/

@@ -1,20 +1,10 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
-	"net/http"
-	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,30 +12,11 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fezcode/go-piml"
 	"github.com/gopxl/beep"
 	"github.com/gopxl/beep/effects"
 	"github.com/gopxl/beep/speaker"
 	"github.com/kkdai/youtube/v2"
 )
-
-const (
-	sampleRate = 44100
-)
-
-type LyricLine struct {
-	Time time.Duration
-	Text string
-}
-
-type Track struct {
-	URL  string `piml:"url"`
-	Name string `piml:"name"`
-}
-
-type PimlPlaylist struct {
-	Videos []Track `piml:"videos"`
-}
 
 type model struct {
 	queue          []Track
@@ -71,7 +42,6 @@ type model struct {
 	showLyrics     bool
 	lyrics         []LyricLine
 	lyricsLoading  bool
-	repeatOne      bool
 	showPlaylist   bool
 	manualLyricIdx int
 	playlistCursor int
@@ -88,6 +58,7 @@ type lyricsMsg struct {
 	err    error
 	url    string
 }
+type errMsg struct{ err error }
 
 func (m *model) Init() tea.Cmd {
 	return tea.Batch(
@@ -126,113 +97,18 @@ func (m *model) loadVideo(urlStr string) tea.Cmd {
 	}
 }
 
-func (m *model) fetchLyrics(video *youtube.Video, videoURL string) tea.Cmd {
+func (m *model) fetchLyricsCmd(video *youtube.Video, videoURL string) tea.Cmd {
 	return func() tea.Msg {
-		clean := func(t string) string {
-			re := regexp.MustCompile(`(?i)\(official video\)|\(official music video\)|\(official audio\)|\(lyric video\)|\(lyrics\)|\(audio\)|\[official video\]|\[official music video\]|\[official audio\]|\[lyric video\]|\[lyrics\]|\[audio\]|\(official\)|\(hd\)|\(4k\)|\[official\]|\[hd\]|\[4k\]|video official|official video|music video|official music video`) 
-			t = re.ReplaceAllString(t, "")
-			return strings.TrimSpace(t)
-		}
-
-		title := clean(video.Title)
-		author := strings.TrimSuffix(strings.TrimSuffix(video.Author, " - Topic"), " VEVO")
-
-		apiURL := fmt.Sprintf("https://lrclib.net/api/get?artist_name=%s&track_name=%s&duration=%d",
-			url.QueryEscape(author),
-			url.QueryEscape(title),
-			int(video.Duration.Seconds()),
-		)
-
-		resp, err := http.Get(apiURL)
-		if err != nil {
-			return lyricsMsg{err: err, url: videoURL}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNotFound {
-			msg := m.searchFallback(author + " " + title)
-			if lMsg, ok := msg.(lyricsMsg); ok {
-				lMsg.url = videoURL
-				return lMsg
-			}
-			return msg
-		}
-
-		var res struct {
-			SyncedLyrics string `json:"syncedLyrics"`
-			PlainLyrics  string `json:"plainLyrics"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-			return lyricsMsg{err: err, url: videoURL}
-		}
-
-		if res.SyncedLyrics != "" {
-			return lyricsMsg{lyrics: parseLRC(res.SyncedLyrics), url: videoURL}
-		} else if res.PlainLyrics != "" {
-			return lyricsMsg{lyrics: []LyricLine{{Time: 0, Text: "[Not Synced]\n" + res.PlainLyrics}}, url: videoURL}
-		}
-
-		return lyricsMsg{err: fmt.Errorf("no lyrics found"), url: videoURL}
+		lyrics, err := FetchLyrics(video)
+		return lyricsMsg{lyrics: lyrics, err: err, url: videoURL}
 	}
 }
 
-func (m *model) searchFallback(query string) tea.Msg {
-	apiURL := fmt.Sprintf("https://lrclib.net/api/search?q=%s", url.QueryEscape(query))
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		return lyricsMsg{err: err}
-	}
-	defer resp.Body.Close()
-
-	var results []struct {
-		SyncedLyrics string `json:"syncedLyrics"`
-		PlainLyrics  string `json:"plainLyrics"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return lyricsMsg{err: err}
-	}
-
-	for _, res := range results {
-		if res.SyncedLyrics != "" {
-			return lyricsMsg{lyrics: parseLRC(res.SyncedLyrics)}
-		}
-	}
-	if len(results) > 0 && results[0].PlainLyrics != "" {
-		return lyricsMsg{lyrics: []LyricLine{{Time: 0, Text: "[Not Synced]\n" + results[0].PlainLyrics}}}
-	}
-
-	return lyricsMsg{err: fmt.Errorf("no lyrics found")}
-}
-
-func parseLRC(lrc string) []LyricLine {
-	var lines []LyricLine
-	re := regexp.MustCompile(`\[(\d+):(\d+)\.(\d+)\](.*)`) 
-	scanner := bufio.NewScanner(strings.NewReader(lrc))
-	for scanner.Scan() {
-		matches := re.FindStringSubmatch(scanner.Text())
-		if len(matches) == 5 {
-			min, _ := strconv.Atoi(matches[1])
-			sec, _ := strconv.Atoi(matches[2])
-			msecStr := matches[3]
-			msec, _ := strconv.Atoi(msecStr)
-			if len(msecStr) == 2 {
-				msec *= 10
-			}
-			t := time.Duration(min)*time.Minute + time.Duration(sec)*time.Second + time.Duration(msec)*time.Millisecond
-			lines = append(lines, LyricLine{
-				Time: t,
-				Text: strings.TrimSpace(matches[4]),
-			})
-		}
-	}
-	return lines
+type playbackStartedMsg struct {
+	startTime time.Duration
 }
 
 func (m *model) nextVideo() tea.Cmd {
-	if m.repeatOne {
-		return m.startPlayback(0)
-	}
-
 	nextIdx := m.currentIndex + 1
 	if nextIdx >= len(m.queue) {
 		nextIdx = 0
@@ -262,8 +138,6 @@ func (m *model) gotoTrack(index int) tea.Cmd {
 	m.manualLyricIdx = 0
 	return m.loadVideo(m.queue[m.currentIndex].URL)
 }
-
-type quittingMsg struct{}
 
 func (m *model) tick() tea.Cmd {
 	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
@@ -306,7 +180,6 @@ func (m *model) startPlayback(startAt time.Duration) tea.Cmd {
 
 		m.ffmpegCmd = cmd
 		m.ffmpegStdout = stdout
-		m.currTime = startAt
 
 		speaker.Lock()
 		m.streamer.Lock()
@@ -315,7 +188,7 @@ func (m *model) startPlayback(startAt time.Duration) tea.Cmd {
 		m.ctrl.Paused = m.paused
 		speaker.Unlock()
 
-		return nil
+		return playbackStartedMsg{startTime: startAt}
 	}
 }
 
@@ -336,8 +209,6 @@ func (m *model) updateVolume() {
 	speaker.Unlock()
 }
 
-type errMsg struct{ err error }
-
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case videoLoadedMsg:
@@ -351,8 +222,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lyricsLoading = true
 		return m, tea.Batch(
 			m.startPlayback(0),
-			m.fetchLyrics(msg.video, msg.url),
+			m.fetchLyricsCmd(msg.video, msg.url),
 		)
+
+	case playbackStartedMsg:
+		m.currTime = msg.startTime
+		m.loading = false
+		return m, nil
 
 	case lyricsMsg:
 		if msg.url != m.queue[m.currentIndex].URL {
@@ -409,17 +285,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rand.Shuffle(len(m.queue), func(i, j int) {
 				m.queue[i], m.queue[j] = m.queue[j], m.queue[i]
 			})
-			m.currentIndex = 0
-			m.video = nil
-			m.loading = true
-			m.currTime = 0
-			m.totalTime = 0
-			m.lyrics = nil
-			m.manualLyricIdx = 0
-			return m, m.loadVideo(m.queue[0].URL)
-		case "t":
-			m.repeatOne = !m.repeatOne
-			return m, nil
+			return m, m.gotoTrack(0)
 		case "v":
 			m.showPlaylist = !m.showPlaylist
 			if m.showPlaylist {
@@ -481,6 +347,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newTime > m.totalTime {
 				newTime = m.totalTime
 			}
+			m.loading = true
 			return m, m.startPlayback(newTime)
 		case "left":
 			if m.loading {
@@ -490,6 +357,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newTime < 0 {
 				newTime = 0
 			}
+			m.loading = true
 			return m, m.startPlayback(newTime)
 		}
 
@@ -501,10 +369,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.tick()
-
-	case quittingMsg:
-		m.quitting = true
-		return m, tea.Quit
 
 	case errMsg:
 		m.err = msg.err
@@ -539,16 +403,16 @@ func (m *model) View() string {
 		return "Goodbye!\n"
 	}
 
-	if m.loading || m.video == nil {
+	// Only flicker to loading screen if we don't have metadata yet.
+	if m.video == nil {
 		return fmt.Sprintf("\n  Loading video %d/%d...\n  %s", m.currentIndex+1, len(m.queue), m.queue[m.currentIndex].URL)
 	}
 
 	statusStr := "PLAYING"
-	if m.paused {
+	if m.loading {
+		statusStr = "BUFFERING"
+	} else if m.paused {
 		statusStr = "PAUSED"
-	}
-	if m.repeatOne {
-		statusStr += " [LOOP-1]"
 	}
 
 	volStr := fmt.Sprintf("%d%%", m.volLevel)
@@ -574,7 +438,7 @@ func (m *model) View() string {
 	)
 
 	if m.showLyrics {
-		s += "\n  LYRICS:\n"
+		s += "\n  LYRICS (provided by LRCLib):\n"
 		if m.lyricsLoading {
 			s += "  Loading lyrics...\n"
 		} else if len(m.lyrics) == 0 {
@@ -630,7 +494,6 @@ func (m *model) View() string {
 
 	if m.showPlaylist {
 		s += "\n  PLAYLIST:\n"
-		// Show a window of 7 items centered on playlistCursor
 		start := m.playlistCursor - 3
 		if start < 0 {
 			start = 0
@@ -653,12 +516,12 @@ func (m *model) View() string {
 			if i == m.playlistCursor {
 				prefix = "> "
 			}
-			
+
 			displayName := m.queue[i].Name
 			if displayName == "" {
 				displayName = m.queue[i].URL
 			}
-			
+
 			line := fmt.Sprintf("%s%d. %s", prefix, i+1, displayName)
 			if i == m.currentIndex {
 				line += " (playing)"
@@ -678,7 +541,7 @@ func (m *model) View() string {
 		}
 	}
 
-	s += "\n" + helpStyle.Render("Space: Pause • +/-: Vol • M: Mute • P: Prev • N: Next • L: Lyrics (A/D: Scroll) • R: Randomize • T: Loop-1 • V: Playlist (Up/Down: Select, Enter: Play) • Q: Quit")
+	s += "\n" + helpStyle.Render("Space: Pause • +/-: Vol • M: Mute • P: Prev • N: Next • L: Lyrics (A/D: Scroll) • R: Randomize • V: Playlist (Up/Down: Select, Enter: Play) • Q: Quit")
 
 	return s
 }
@@ -696,121 +559,3 @@ func formatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%02d:%02d", m, s)
 }
-
-func main() {
-	rand.Seed(time.Now().UnixNano())
-	filePath := flag.String("file", "", "Path to a file containing YouTube URLs (one per line) or .piml file")
-	flag.Parse()
-
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		fmt.Println("Error: ffmpeg is not installed or not in your PATH.")
-		fmt.Println("FFmpeg is required to decode YouTube's audio formats (Opus/AAC).")
-		os.Exit(1)
-	}
-
-	var queue []Track
-	if *filePath != "" {
-		ext := strings.ToLower(filepath.Ext(*filePath))
-		if ext == ".piml" {
-			data, err := os.ReadFile(*filePath)
-			if err != nil {
-				log.Fatalf("Error reading piml file: %v", err)
-			}
-			var pimlData PimlPlaylist
-			if err := piml.Unmarshal(data, &pimlData); err != nil {
-				log.Fatalf("Error unmarshaling piml: %v", err)
-			}
-			queue = pimlData.Videos
-		} else {
-			file, err := os.Open(*filePath)
-			if err != nil {
-				log.Fatalf("Error opening file: %v", err)
-			}
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line != "" && !strings.HasPrefix(line, "#") {
-					queue = append(queue, Track{URL: line})
-				}
-			}
-		}
-	}
-
-	for _, arg := range flag.Args() {
-		queue = append(queue, Track{URL: arg})
-	}
-
-	if len(queue) == 0 {
-		fmt.Println("Usage: yt-audio-player [--file <path>] <youtube-url1> [youtube-url2] ...")
-		return
-	}
-
-	client := youtube.Client{}
-
-	sr := beep.SampleRate(sampleRate)
-	err := speaker.Init(sr, sr.N(time.Second/10))
-	if err != nil {
-		log.Fatalf("Error initializing speaker: %v", err)
-	}
-
-	streamer := &pcmStreamer{}
-	ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
-	volume := &effects.Volume{Streamer: ctrl, Base: 2, Volume: 0, Silent: false}
-	speaker.Play(volume)
-
-	m := model{
-		queue:    queue,
-		client:   &client,
-		progress: progress.New(progress.WithGradient("#7300ab", "#0087ff")),
-		streamer: streamer,
-		ctrl:     ctrl,
-		volume:   volume,
-		volLevel: 50,
-		loading:  true,
-	}
-
-	p := tea.NewProgram(&m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error running program: %v", err)
-		os.Exit(1)
-	}
-}
-
-type pcmStreamer struct {
-	reader io.Reader
-	mu     sync.Mutex
-}
-
-func (p *pcmStreamer) Lock()   { p.mu.Lock() }
-func (p *pcmStreamer) Unlock() { p.mu.Unlock() }
-
-func (p *pcmStreamer) Stream(samples [][2]float64) (n int, ok bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.reader == nil {
-		for i := range samples {
-			samples[i] = [2]float64{0, 0}
-		}
-		return len(samples), true
-	}
-
-	var buf [4]byte
-	for i := range samples {
-		_, err := io.ReadFull(p.reader, buf[:])
-		if err != nil {
-			samples[i] = [2]float64{0, 0}
-			continue
-		}
-		left := int16(buf[0]) | int16(buf[1])<<8
-		right := int16(buf[2]) | int16(buf[3])<<8
-		samples[i][0] = float64(left) / 32768.0
-		samples[i][1] = float64(right) / 32768.0
-		n++
-	}
-	return len(samples), true
-}
-
-func (p *pcmStreamer) Err() error { return nil }

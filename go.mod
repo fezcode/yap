@@ -1,4 +1,4 @@
-module yt-audio-player
+module yap
 
 go 1.25.3
 

@@ -1,4 +1,4 @@
-# YouTube Audio Player (CLI)
+# YAP - YouTube Audio Player (CLI)
 
 A lightweight, terminal-based YouTube audio player written in Go. It streams audio directly from YouTube URLs and supports playback queuing, synced lyrics, and advanced playback controls.
 
@@ -19,14 +19,31 @@ This project leverages several high-quality Go libraries:
 | `github.com/charmbracelet/bubbles` | Provides the progress bar component. |
 | `github.com/charmbracelet/lipgloss` | Used for styling and layout of the terminal UI. |
 | `github.com/gopxl/beep` | A powerful audio library used for PCM playback and speaker management. |
-| `github.com/fezcode/go-piml` | Used for parsing `.piml` playlist files. |
+| `github.com/fezcode/go-piml` | Used for parsing `.piml` playlist files (v1.1.2). |
+
+Lyrics are fetched from the excellent [LRCLib](https://lrclib.net/) API.
+
+## Project Structure
+
+```text
+yap/
+├── src/               # Go source code
+│   ├── audio.go       # Audio streaming and processing
+│   ├── lyrics.go      # Lyric fetching and parsing
+│   ├── main.go        # Entry point and initialization
+│   ├── playlist.go    # Playlist loading logic
+│   ├── types.go       # Shared data structures
+│   └── ui.go          # TUI model and rendering
+├── playlist.piml      # Example PIML playlist
+└── playlist.txt       # Example text playlist
+```
 
 ## Building the Project
 
-To build the executable, run the following command in the project root:
+To build the executable, run:
 
 ```bash
-go build -o yt-audio-player main.go
+go build -o yap.exe ./src
 ```
 
 ## Usage
@@ -35,11 +52,11 @@ Provide one or more YouTube URLs as arguments or use a playlist file:
 
 ```bash
 # Direct URLs
-./yt-audio-player <url1> [url2] ...
+./yap.exe <url1> [url2] ...
 
 # From a playlist file
-./yt-audio-player --file playlist.txt
-./yt-audio-player --file playlist.piml
+./yap.exe --file playlist.txt
+./yap.exe --file playlist.piml
 ```
 
 ## Playlist Formats
@@ -79,12 +96,12 @@ A structured format using the PIML language. This allows you to define custom na
 - **M**: Mute / Unmute.
 - **L**: Toggle Synced Lyrics (A/D to scroll non-synced lyrics).
 - **V**: Toggle Playlist view.
+  - **Up / Down Arrow**: Select track in playlist view.
+  - **Enter**: Play selected track.
 - **R**: Randomize (Shuffle) the current list.
-- **T**: Toggle Loop-One (Repeat track) mode.
 - **N**: Skip to the next track in the queue.
 - **P**: Previous track (restarts current track if it has played for > 3 seconds).
-- **Left Arrow**: Seek backward 10 seconds.
-- **Right Arrow**: Seek forward 10 seconds.
+- **Left / Right Arrow**: Seek backward/forward 10 seconds.
 - **Q / Ctrl+C**: Quit the player.
 
 *Note: The player will automatically loop back to the first song after the last track finishes.*
