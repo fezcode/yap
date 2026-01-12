@@ -2,6 +2,8 @@
 
 A lightweight, terminal-based YouTube audio player written in Go. It streams audio directly from YouTube URLs and supports playback queuing, synced lyrics, and advanced playback controls.
 
+![YAP - Banner](./banner.png)
+
 ## Prerequisites
 
 - **Go**: Version 1.18 or higher.
