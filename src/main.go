@@ -66,7 +66,7 @@ func main() {
 	m := model{
 		queue:    queue,
 		client:   &client,
-		progress: progress.New(progress.WithGradient("#7300ab", "#0087ff")),
+		progress: progress.New(progress.WithGradient("#EE9480", "#0B132B")),
 		streamer: streamer,
 		ctrl:     ctrl,
 		volume:   volume,

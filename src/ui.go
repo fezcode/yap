@@ -209,6 +209,19 @@ func (m *model) updateVolume() {
 	speaker.Unlock()
 }
 
+func (m *model) updateTitle() tea.Cmd {
+	if m.video == nil {
+		return tea.SetWindowTitle("YAP - Loading...")
+	}
+	status := "PLAYING"
+	if m.loading {
+		status = "BUFFERING"
+	} else if m.paused {
+		status = "PAUSED"
+	}
+	return tea.SetWindowTitle(fmt.Sprintf("YAP - %s [%s]", status, m.video.Title))
+}
+
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case videoLoadedMsg:
@@ -223,12 +236,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			m.startPlayback(0),
 			m.fetchLyricsCmd(msg.video, msg.url),
+			m.updateTitle(),
 		)
 
 	case playbackStartedMsg:
 		m.currTime = msg.startTime
 		m.loading = false
-		return m, nil
+		return m, m.updateTitle()
 
 	case lyricsMsg:
 		if msg.url != m.queue[m.currentIndex].URL {
@@ -258,7 +272,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			speaker.Lock()
 			m.ctrl.Paused = m.paused
 			speaker.Unlock()
-			return m, nil
+			return m, m.updateTitle()
 		case "n":
 			return m, m.nextVideo()
 		case "p":
@@ -285,7 +299,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rand.Shuffle(len(m.queue), func(i, j int) {
 				m.queue[i], m.queue[j] = m.queue[j], m.queue[i]
 			})
-			return m, m.gotoTrack(0)
+			return m, tea.Batch(m.gotoTrack(0), m.updateTitle())
 		case "v":
 			m.showPlaylist = !m.showPlaylist
 			if m.showPlaylist {
@@ -310,7 +324,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.showPlaylist {
-				return m, m.gotoTrack(m.playlistCursor)
+				return m, tea.Batch(m.gotoTrack(m.playlistCursor), m.updateTitle())
 			}
 		case "m":
 			if m.volLevel > 0 {
