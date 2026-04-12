@@ -20,7 +20,23 @@ import (
 const (
 )
 
+var Version = "dev" // Overwritten by gobake build
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "-v" || os.Args[1] == "--version") {
+		fmt.Printf("yap v%s\n", Version)
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "-h" || os.Args[1] == "--help") {
+		fmt.Println("yap - YouTube Audio Player TUI")
+		fmt.Println("Usage: yap [--file <path>] <youtube-url1> [youtube-url2] ...")
+		fmt.Println("Options:")
+		fmt.Println("  --file string   Path to a file containing YouTube URLs (one per line) or .piml file")
+		fmt.Println("  -v, --version   Show version")
+		fmt.Println("  -h, --help      Show help")
+		return
+	}
+
 	fmt.Println("Main starting...")
 	home, _ := os.UserHomeDir()
 	logPath := filepath.Join(home, fmt.Sprintf("yap_debug_%d.log", time.Now().Unix()))

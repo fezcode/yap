@@ -43,6 +43,10 @@ github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/fezcode/go-piml v1.1.2 h1:g+DUwEmQUsOSiIRTEvLt2Yf5TDoGPR+xQ7ZJ7uBU+3U=
 github.com/fezcode/go-piml v1.1.2/go.mod h1:GbFMPCBsrUoNZnG3JzTr7BwbIeMucPs70LuvkgxJYdQ=
+github.com/fezcode/go-piml v1.2.1 h1:IW71Q6vEjyzpkeMvV1wkgP8w/ucObXXF5WDEaadMQSE=
+github.com/fezcode/go-piml v1.2.1/go.mod h1:GbFMPCBsrUoNZnG3JzTr7BwbIeMucPs70LuvkgxJYdQ=
+github.com/fezcode/gobake v0.3.0 h1:wYw1EXHoUjpYXzG7MUgE5ohKxZ+XXYu2Vdf5wsKhKE8=
+github.com/fezcode/gobake v0.3.0/go.mod h1:xLBhJdcq4K9Fv2rV+hlTXnUa9sB7q/qHQfQlqfmQuWo=
 github.com/go-sourcemap/sourcemap v2.1.4+incompatible h1:a+iTbH5auLKxaNwQFg0B+TCYl6lbukKPc7b5x0n1s6Q=
 github.com/go-sourcemap/sourcemap v2.1.4+incompatible/go.mod h1:F8jJfvm2KbVjc5NqelyYJmf/v5J0dwNLS2mL4sNA1Jg=
 github.com/google/pprof v0.0.0-20250208200701-d0013a598941 h1:43XjGa6toxLpeksjcxs1jIoIyr+vUfOqY2c6HB4bpoc=

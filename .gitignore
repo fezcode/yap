@@ -17,3 +17,6 @@ Thumbs.db
 
 # Go
 vendor/
+
+# Build artifacts
+build/
