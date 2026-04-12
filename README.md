@@ -6,7 +6,7 @@ A lightweight, terminal-based YouTube audio player written in Go. It streams aud
 
 ## Prerequisites
 
-- **Go**: Version 1.18 or higher.
+- **Go**: Version 1.26 or higher.
 - **FFmpeg**: Required for decoding YouTube's audio streams (Opus/AAC) into PCM format for playback. 
   - Ensure `ffmpeg` is in your system's `PATH`.
 
@@ -45,7 +45,7 @@ yap/
 To build the executable, run:
 
 ```bash
-go build -o yap.exe ./src
+gobake build
 ```
 
 ## Usage
