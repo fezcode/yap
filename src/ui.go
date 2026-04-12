@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"math/rand"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +21,7 @@ type model struct {
 	currentIndex   int
 	client         *youtube.Client
 	video          *youtube.Video
-	streamURL      string
+	selectedFormat *youtube.Format
 	progress       progress.Model
 	currTime       time.Duration
 	totalTime      time.Duration
@@ -31,13 +29,11 @@ type model struct {
 	loading        bool
 	err            error
 	quitting       bool
-	ffmpegCmd      *exec.Cmd
-	ffmpegStdout   io.ReadCloser
 	ctrl           *beep.Ctrl
 	volume         *effects.Volume
 	volLevel       int // 0 to 100
 	prevVolLevel   int // To restore after unmute
-	streamer       *pcmStreamer
+	streamer       *OpusStreamer
 	mu             sync.Mutex
 	showLyrics     bool
 	lyrics         []LyricLine
@@ -49,9 +45,9 @@ type model struct {
 
 type tickMsg time.Time
 type videoLoadedMsg struct {
-	video     *youtube.Video
-	streamURL string
-	url       string
+	video          *youtube.Video
+	selectedFormat *youtube.Format
+	url            string
 }
 type lyricsMsg struct {
 	lyrics []LyricLine
@@ -74,25 +70,40 @@ func (m *model) loadVideo(urlStr string) tea.Cmd {
 			return errMsg{err}
 		}
 
-		formats := video.Formats.Select(func(f youtube.Format) bool {
-			return f.AudioChannels > 0 && strings.HasPrefix(f.MimeType, "audio/")
-		})
-		if len(formats) == 0 {
-			formats = video.Formats.WithAudioChannels()
+		// Prefer itag 251 (Opus)
+		var selectedFormat *youtube.Format
+		for i := range video.Formats {
+			f := &video.Formats[i]
+			if f.ItagNo == 251 {
+				selectedFormat = f
+				break
+			}
 		}
-		if len(formats) == 0 {
+
+		if selectedFormat == nil {
+			formats := video.Formats.Select(func(f youtube.Format) bool {
+				return f.AudioChannels > 0 && strings.HasPrefix(f.MimeType, "audio/")
+			})
+			if len(formats) > 0 {
+				selectedFormat = &formats[0]
+			}
+		}
+
+		if selectedFormat == nil {
+			formats := video.Formats.WithAudioChannels()
+			if len(formats) > 0 {
+				selectedFormat = &formats[0]
+			}
+		}
+
+		if selectedFormat == nil {
 			return errMsg{fmt.Errorf("no audio formats found")}
 		}
 
-		streamURL, err := m.client.GetStreamURL(video, &formats[0])
-		if err != nil {
-			return errMsg{err}
-		}
-
 		return videoLoadedMsg{
-			video:     video,
-			streamURL: streamURL,
-			url:       urlStr,
+			video:          video,
+			selectedFormat: selectedFormat,
+			url:            urlStr,
 		}
 	}
 }
@@ -131,6 +142,7 @@ func (m *model) prevVideo() tea.Cmd {
 func (m *model) gotoTrack(index int) tea.Cmd {
 	m.currentIndex = index
 	m.video = nil
+	m.selectedFormat = nil
 	m.loading = true
 	m.currTime = 0
 	m.totalTime = 0
@@ -150,41 +162,11 @@ func (m *model) startPlayback(startAt time.Duration) tea.Cmd {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		if m.ffmpegCmd != nil {
-			m.ffmpegCmd.Process.Kill()
-			_ = m.ffmpegCmd.Wait()
-		}
-		if m.ffmpegStdout != nil {
-			_ = m.ffmpegStdout.Close()
-		}
-
-		startTime := fmt.Sprintf("%.3f", startAt.Seconds())
-		cmd := exec.Command("ffmpeg",
-			"-ss", startTime,
-			"-i", m.streamURL,
-			"-f", "s16le",
-			"-ac", "2",
-			"-ar", "44100",
-			"-acodec", "pcm_s16le",
-			"pipe:1",
-		)
-		cmd.Stderr = nil
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return errMsg{err}
-		}
-
-		if err := cmd.Start(); err != nil {
-			return errMsg{err}
-		}
-
-		m.ffmpegCmd = cmd
-		m.ffmpegStdout = stdout
+		m.streamer.Start(m.video, m.selectedFormat)
 
 		speaker.Lock()
-		m.streamer.Lock()
-		m.streamer.reader = stdout
-		m.streamer.Unlock()
+		speaker.Clear()
+		speaker.Play(m.volume)
 		m.ctrl.Paused = m.paused
 		speaker.Unlock()
 
@@ -229,7 +211,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.video = msg.video
-		m.streamURL = msg.streamURL
+		m.selectedFormat = msg.selectedFormat
 		m.totalTime = msg.video.Duration
 		m.loading = false
 		m.lyricsLoading = true
@@ -258,11 +240,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
-			m.mu.Lock()
-			if m.ffmpegCmd != nil {
-				m.ffmpegCmd.Process.Kill()
-			}
-			m.mu.Unlock()
+			m.streamer.Close()
 			return m, tea.Quit
 		case " ":
 			if m.loading {
@@ -361,8 +339,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newTime > m.totalTime {
 				newTime = m.totalTime
 			}
-			m.loading = true
-			return m, m.startPlayback(newTime)
+			// m.loading = true
+			// return m, m.startPlayback(newTime)
+			return m, nil // Seeking disabled for now
 		case "left":
 			if m.loading {
 				return m, nil
@@ -371,8 +350,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newTime < 0 {
 				newTime = 0
 			}
-			m.loading = true
-			return m, m.startPlayback(newTime)
+			// m.loading = true
+			// return m, m.startPlayback(newTime)
+			return m, nil // Seeking disabled for now
 		}
 
 	case tickMsg:

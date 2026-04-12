@@ -6,7 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -18,23 +18,28 @@ import (
 )
 
 const (
-	sampleRate = 44100
 )
 
 func main() {
+	fmt.Println("Main starting...")
+	home, _ := os.UserHomeDir()
+	logPath := filepath.Join(home, fmt.Sprintf("yap_debug_%d.log", time.Now().Unix()))
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		debugLog = log.New(f, "DEBUG: ", log.LstdFlags)
+		debugLog.Printf("Application started - logging to %s\n", logPath)
+		fmt.Printf("Logging to: %s\n", logPath)
+	} else {
+		fmt.Printf("Failed to open log file: %v\n", err)
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	filePath := flag.String("file", "", "Path to a file containing YouTube URLs (one per line) or .piml file")
 	flag.Parse()
 
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		fmt.Println("Error: ffmpeg is not installed or not in your PATH.")
-		fmt.Println("FFmpeg is required to decode YouTube's audio formats (Opus/AAC).")
-		os.Exit(1)
-	}
-
 	var queue []Track
 	if *filePath != "" {
-		var err error
+		err = nil // Use existing err
 		queue, err = LoadPlaylist(*filePath)
 		if err != nil {
 			log.Fatalf("Error loading playlist: %v", err)
@@ -52,17 +57,19 @@ func main() {
 
 	client := youtube.Client{}
 
-	sr := beep.SampleRate(sampleRate)
-	err := speaker.Init(sr, sr.N(time.Second/10))
+	sr := beep.SampleRate(48000) // Opus is 48kHz
+	err = speaker.Init(sr, sr.N(time.Second/5)) // 200ms buffer
 	if err != nil {
 		log.Fatalf("Error initializing speaker: %v", err)
 	}
 
-	streamer := &pcmStreamer{}
+	fmt.Printf("Initializing streamer...\n")
+	streamer := NewOpusStreamer(&client)
 	ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
 	volume := &effects.Volume{Streamer: ctrl, Base: 2, Volume: 0, Silent: false}
 	speaker.Play(volume)
 
+	fmt.Printf("Starting TUI...\n")
 	m := model{
 		queue:    queue,
 		client:   &client,
