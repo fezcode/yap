@@ -1,8 +1,8 @@
-# YAP - YouTube Audio Player (CLI)
+# atlas.yap - YouTube Audio Player (CLI)
 
-A lightweight, terminal-based YouTube audio player written in Go. It streams audio directly from YouTube URLs and supports playback queuing, synced lyrics, and advanced playback controls.
+A lightweight, terminal-based YouTube audio player written in Go. It streams audio directly from YouTube URLs and supports playback queuing, synced lyrics, YouTube search, and advanced playback controls.
 
-![YAP - Banner](./banner.png)
+![atlas.yap - Banner](./banner.png)
 
 ## Prerequisites
 
@@ -28,12 +28,13 @@ Lyrics are fetched from the excellent [LRCLib](https://lrclib.net/) API.
 ## Project Structure
 
 ```text
-yap/
+atlas.yap/
 ├── src/               # Go source code
 │   ├── audio.go       # Audio streaming and processing
 │   ├── lyrics.go      # Lyric fetching and parsing
 │   ├── main.go        # Entry point and initialization
 │   ├── playlist.go    # Playlist loading logic
+│   ├── search.go      # YouTube search resolver
 │   ├── types.go       # Shared data structures
 │   └── ui.go          # TUI model and rendering
 ├── playlist.piml      # Example PIML playlist
@@ -50,15 +51,24 @@ gobake build
 
 ## Usage
 
-Provide one or more YouTube URLs as arguments or use a playlist file:
+Provide one or more YouTube URLs as arguments, search YouTube directly, or use a playlist file:
 
 ```bash
 # Direct URLs
-./yap.exe <url1> [url2] ...
+./atlas.yap.exe <url1> [url2] ...
 
 # From a playlist file
-./yap.exe --file playlist.txt
-./yap.exe --file playlist.piml
+./atlas.yap.exe --file playlist.txt
+./atlas.yap.exe --file playlist.piml
+
+# Search YouTube and play the first result
+./atlas.yap.exe --search "morcheeba even though"
+
+# Anything that does not look like a URL is treated as a search query too:
+./atlas.yap.exe morcheeba even though
+
+# Enqueue the top N results from a search:
+./atlas.yap.exe --search "lo-fi study mix" -n 5
 ```
 
 ## Playlist Formats

@@ -1,4 +1,4 @@
-(name) yap
-(version) 0.1.1
-(description) YouTube Audio Player TUI
+(name) atlas.yap
+(version) 0.2.0
+(description) YouTube Audio Player TUI with search
 (license) MIT

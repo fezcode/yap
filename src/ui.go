@@ -193,7 +193,7 @@ func (m *model) updateVolume() {
 
 func (m *model) updateTitle() tea.Cmd {
 	if m.video == nil {
-		return tea.SetWindowTitle("YAP - Loading...")
+		return tea.SetWindowTitle("atlas.yap - Loading...")
 	}
 	status := "PLAYING"
 	if m.loading {
@@ -201,7 +201,7 @@ func (m *model) updateTitle() tea.Cmd {
 	} else if m.paused {
 		status = "PAUSED"
 	}
-	return tea.SetWindowTitle(fmt.Sprintf("YAP - %s [%s]", status, m.video.Title))
+	return tea.SetWindowTitle(fmt.Sprintf("atlas.yap - %s [%s]", status, m.video.Title))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
