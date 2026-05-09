@@ -395,23 +395,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateVolume()
 			return m, nil
 		case "right":
-			if m.loading || m.video == nil {
+			if m.video == nil {
 				return m, nil
 			}
-			newTime := m.currTime + 10*time.Second
+			delta := 10 * time.Second
+			newTime := m.currTime + delta
 			if newTime > m.totalTime {
 				newTime = m.totalTime
+				delta = newTime - m.currTime
+			}
+			// Try to satisfy in-buffer first. If the target is already
+			// decoded, the listener hears the seek instantly — no restart.
+			if !m.loading && m.streamer != nil && m.streamer.TrySeek(delta) {
+				m.currTime = newTime
+				return m, m.updateTitle()
 			}
 			m.loading = true
 			m.currTime = newTime
 			return m, tea.Batch(m.startPlayback(newTime), m.updateTitle())
 		case "left":
-			if m.loading || m.video == nil {
+			if m.video == nil {
 				return m, nil
 			}
-			newTime := m.currTime - 10*time.Second
+			delta := -10 * time.Second
+			newTime := m.currTime + delta
 			if newTime < 0 {
 				newTime = 0
+				delta = newTime - m.currTime
+			}
+			if !m.loading && m.streamer != nil && m.streamer.TrySeek(delta) {
+				m.currTime = newTime
+				return m, m.updateTitle()
 			}
 			m.loading = true
 			m.currTime = newTime

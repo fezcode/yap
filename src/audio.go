@@ -78,6 +78,11 @@ type OpusStreamer struct {
 	startAt          time.Duration
 	deliveredSamples int64
 	firstAudioLogged bool
+	// currentBody is the HTTP body of the in-flight run(). Held so Start()
+	// can force-close it, making ebml.Unmarshal in the previous goroutine
+	// return immediately — otherwise it would keep draining the throttled
+	// stream connection long after we've moved on.
+	currentBody io.Closer
 }
 
 func NewOpusStreamer(client *youtube.Client) *OpusStreamer {
@@ -94,6 +99,11 @@ func (os *OpusStreamer) Start(video *youtube.Video, format *youtube.Format, star
 	os.mu.Lock()
 	if os.closeChan != nil {
 		close(os.closeChan)
+	}
+	if os.currentBody != nil {
+		// Force the previous run's ebml.Unmarshal to return now.
+		_ = os.currentBody.Close()
+		os.currentBody = nil
 	}
 	os.closeChan = make(chan struct{})
 	os.pcmBuf = nil
@@ -127,6 +137,34 @@ func (os *OpusStreamer) Position() time.Duration {
 	return os.startAt + time.Duration(os.deliveredSamples)*time.Second/48000
 }
 
+// TrySeek attempts to satisfy a relative seek (positive = forward, negative
+// = backward) by walking pcmBuf in place — instant. Returns true if the
+// target landed inside the buffered window; false otherwise, in which case
+// the caller should fall back to a full Start() restart from the new
+// absolute time. Avoids the multi-second re-fetch hit that re-decoding
+// from byte 0 always incurs.
+func (os *OpusStreamer) TrySeek(delta time.Duration) bool {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+
+	if os.skipSamples > 0 {
+		// Currently skipping ahead from a previous restart; fast-seek would
+		// land in unrelated samples. Force the caller to restart cleanly.
+		return false
+	}
+
+	deltaPerCh := int(delta.Seconds() * 48000)            // per-channel samples
+	deltaInterleaved := deltaPerCh * 2                    // int16 entries
+	newIdx := os.pcmIdx + deltaInterleaved
+	if newIdx < 0 || newIdx > len(os.pcmBuf) {
+		return false
+	}
+
+	os.pcmIdx = newIdx
+	os.deliveredSamples += int64(deltaPerCh)
+	return true
+}
+
 func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop chan struct{}, gen int64) {
 	debugLog.Printf("RUN: Getting stream URL")
 	streamURL, err := os.client.GetStreamURL(video, format)
@@ -145,6 +183,16 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 	}
 	defer resp.Body.Close()
 	debugLog.Printf("RUN: HTTP Status: %s", resp.Status)
+
+	// Publish our body so a subsequent Start() can force-close it and we
+	// exit ebml.Unmarshal immediately. Only register if we're still the
+	// current generation — otherwise an even newer Start has already
+	// fired and we shouldn't overwrite its body.
+	os.mu.Lock()
+	if os.generation == gen {
+		os.currentBody = resp.Body
+	}
+	os.mu.Unlock()
 
 	decodedFrames := 0
 	hook := func(elem *ebml.Element) {
@@ -192,12 +240,15 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 					os.pcmBuf = append(os.pcmBuf, produced...)
 				}
 
-				// Max buffer 20 seconds
-				if len(os.pcmBuf) > 48000*2*20 {
-					if os.pcmIdx > 48000*2*10 {
-						os.pcmBuf = os.pcmBuf[os.pcmIdx:]
-						os.pcmIdx = 0
-					}
+				// Retain ~30s of played history (so a backward seek up to
+				// 30s lands in-buffer) plus whatever the decoder has run
+				// ahead. Trim only when the played portion grows past 30s
+				// AND total buffer exceeds 60s.
+				const histSamples = 48000 * 2 * 30
+				const maxBuf = 48000 * 2 * 60
+				if len(os.pcmBuf) > maxBuf && os.pcmIdx > histSamples {
+					os.pcmBuf = os.pcmBuf[os.pcmIdx-histSamples:]
+					os.pcmIdx = histSamples
 				}
 				os.mu.Unlock()
 				
@@ -229,6 +280,7 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 	os.mu.Lock()
 	if os.generation == gen {
 		os.streamClosed = true
+		os.currentBody = nil
 	}
 	os.mu.Unlock()
 }
