@@ -129,12 +129,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error initializing speaker: %v", err)
 	}
+	if debugLog != nil {
+		debugLog.Printf("MAIN: speaker.Init OK sr=%d bufferSamples=%d", int(sr), sr.N(time.Second/5))
+	}
 
 	fmt.Printf("Initializing streamer...\n")
 	streamer := NewOpusStreamer(&client)
 	ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
 	volume := &effects.Volume{Streamer: ctrl, Base: 2, Volume: 0, Silent: false}
 	speaker.Play(volume)
+	if debugLog != nil {
+		debugLog.Printf("MAIN: speaker.Play(volume) called")
+	}
 
 	fmt.Printf("Starting TUI...\n")
 	m := model{

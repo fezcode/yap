@@ -70,34 +70,49 @@ func (m *model) loadVideo(urlStr string) tea.Cmd {
 			return errMsg{err}
 		}
 
-		// Prefer itag 251 (Opus)
+		if debugLog != nil {
+			debugLog.Printf("LOADVIDEO: %d formats available for %q", len(video.Formats), video.Title)
+			for i := range video.Formats {
+				f := &video.Formats[i]
+				debugLog.Printf("  [%d] itag=%d mime=%q channels=%d bitrate=%d",
+					i, f.ItagNo, f.MimeType, f.AudioChannels, f.Bitrate)
+			}
+		}
+
+		// The audio pipeline only handles WebM/Opus — try opus itags in order
+		// of quality (251 = ~160kbps, 250 = ~70kbps, 249 = ~50kbps), then any
+		// format whose MIME type advertises opus.
 		var selectedFormat *youtube.Format
-		for i := range video.Formats {
-			f := &video.Formats[i]
-			if f.ItagNo == 251 {
-				selectedFormat = f
+		for _, want := range []int{251, 250, 249} {
+			for i := range video.Formats {
+				f := &video.Formats[i]
+				if f.ItagNo == want {
+					selectedFormat = f
+					break
+				}
+			}
+			if selectedFormat != nil {
 				break
 			}
 		}
-
 		if selectedFormat == nil {
-			formats := video.Formats.Select(func(f youtube.Format) bool {
-				return f.AudioChannels > 0 && strings.HasPrefix(f.MimeType, "audio/")
-			})
-			if len(formats) > 0 {
-				selectedFormat = &formats[0]
+			for i := range video.Formats {
+				f := &video.Formats[i]
+				if f.AudioChannels > 0 &&
+					(strings.Contains(f.MimeType, "opus") || strings.Contains(f.MimeType, "webm")) {
+					selectedFormat = f
+					break
+				}
 			}
 		}
 
 		if selectedFormat == nil {
-			formats := video.Formats.WithAudioChannels()
-			if len(formats) > 0 {
-				selectedFormat = &formats[0]
-			}
+			return errMsg{fmt.Errorf("no Opus/WebM audio format available for this video (only Opus/WebM is supported)")}
 		}
 
-		if selectedFormat == nil {
-			return errMsg{fmt.Errorf("no audio formats found")}
+		if debugLog != nil {
+			debugLog.Printf("LOADVIDEO: selected itag=%d mime=%q bitrate=%d",
+				selectedFormat.ItagNo, selectedFormat.MimeType, selectedFormat.Bitrate)
 		}
 
 		return videoLoadedMsg{
@@ -162,13 +177,22 @@ func (m *model) startPlayback(startAt time.Duration) tea.Cmd {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		m.streamer.Start(m.video, m.selectedFormat)
+		m.streamer.Start(m.video, m.selectedFormat, startAt)
 
-		speaker.Lock()
+		if debugLog != nil {
+			debugLog.Printf("UI: startPlayback startAt=%s, before speaker.Play", startAt)
+		}
+		// speaker.Clear/Play each take the speaker mutex internally — calling
+		// them inside speaker.Lock()/Unlock() deadlocks because beep's mutex
+		// is non-reentrant.
 		speaker.Clear()
 		speaker.Play(m.volume)
+		speaker.Lock()
 		m.ctrl.Paused = m.paused
 		speaker.Unlock()
+		if debugLog != nil {
+			debugLog.Printf("UI: startPlayback after speaker.Play paused=%v", m.paused)
+		}
 
 		return playbackStartedMsg{startTime: startAt}
 	}
@@ -332,27 +356,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateVolume()
 			return m, nil
 		case "right":
-			if m.loading {
+			if m.loading || m.video == nil {
 				return m, nil
 			}
 			newTime := m.currTime + 10*time.Second
 			if newTime > m.totalTime {
 				newTime = m.totalTime
 			}
-			// m.loading = true
-			// return m, m.startPlayback(newTime)
-			return m, nil // Seeking disabled for now
+			m.loading = true
+			m.currTime = newTime
+			return m, tea.Batch(m.startPlayback(newTime), m.updateTitle())
 		case "left":
-			if m.loading {
+			if m.loading || m.video == nil {
 				return m, nil
 			}
 			newTime := m.currTime - 10*time.Second
 			if newTime < 0 {
 				newTime = 0
 			}
-			// m.loading = true
-			// return m, m.startPlayback(newTime)
-			return m, nil // Seeking disabled for now
+			m.loading = true
+			m.currTime = newTime
+			return m, tea.Batch(m.startPlayback(newTime), m.updateTitle())
 		}
 
 	case tickMsg:
@@ -535,7 +559,7 @@ func (m *model) View() string {
 		}
 	}
 
-	s += "\n" + helpStyle.Render("Space: Pause • +/-: Vol • M: Mute • P: Prev • N: Next • L: Lyrics (A/D: Scroll) • R: Randomize • V: Playlist (Up/Down: Select, Enter: Play) • Q: Quit")
+	s += "\n" + helpStyle.Render("Space: Pause • ←/→: Seek 10s • +/-: Vol • M: Mute • P: Prev • N: Next • L: Lyrics (A/D: Scroll) • R: Randomize • V: Playlist (Up/Down: Select, Enter: Play) • Q: Quit")
 
 	return s
 }

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/at-wat/ebml-go"
 	"github.com/dosgo/libopus/opus"
@@ -60,6 +61,12 @@ type OpusStreamer struct {
 	err          error
 	client       *youtube.Client
 	streamCount  uint64
+	// skipSamples counts interleaved int16 samples (so 1 sec stereo @48kHz =
+	// 96000) that the decoder should drop before publishing audio. Set on
+	// Start() to implement seeking by re-decoding from the beginning and
+	// discarding everything before the target time.
+	skipSamples int
+	firstAudioLogged bool
 }
 
 func NewOpusStreamer(client *youtube.Client) *OpusStreamer {
@@ -71,8 +78,8 @@ func NewOpusStreamer(client *youtube.Client) *OpusStreamer {
 	}
 }
 
-func (os *OpusStreamer) Start(video *youtube.Video, format *youtube.Format) {
-	debugLog.Printf("OpusStreamer.Start: %s", video.Title)
+func (os *OpusStreamer) Start(video *youtube.Video, format *youtube.Format, startAt time.Duration) {
+	debugLog.Printf("OpusStreamer.Start: %s (startAt=%s)", video.Title, startAt)
 	os.mu.Lock()
 	if os.closeChan != nil {
 		close(os.closeChan)
@@ -82,6 +89,11 @@ func (os *OpusStreamer) Start(video *youtube.Video, format *youtube.Format) {
 	os.pcmIdx = 0
 	os.streamClosed = false
 	os.err = nil
+	if startAt < 0 {
+		startAt = 0
+	}
+	// 48kHz × 2 channels = 96000 int16s per second
+	os.skipSamples = int(startAt.Seconds()) * 48000 * 2
 	os.mu.Unlock()
 
 	go os.run(video, format, os.closeChan)
@@ -132,8 +144,20 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 					continue
 				}
 				os.mu.Lock()
-				os.pcmBuf = append(os.pcmBuf, pcm[:n*2]...)
-				
+				produced := pcm[:n*2]
+				if os.skipSamples > 0 {
+					if len(produced) <= os.skipSamples {
+						os.skipSamples -= len(produced)
+						produced = nil
+					} else {
+						produced = produced[os.skipSamples:]
+						os.skipSamples = 0
+					}
+				}
+				if len(produced) > 0 {
+					os.pcmBuf = append(os.pcmBuf, produced...)
+				}
+
 				// Max buffer 20 seconds
 				if len(os.pcmBuf) > 48000*2*20 {
 					if os.pcmIdx > 48000*2*10 {
@@ -178,13 +202,12 @@ func (os *OpusStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 	defer os.mu.Unlock()
 
 	os.streamCount++
-	if os.streamCount % 100 == 0 {
-		// available := len(os.pcmBuf) - os.pcmIdx
-		// debugLog.Printf("STREAM: call %d, pcm available: %d", os.streamCount, available)
+	available := len(os.pcmBuf) - os.pcmIdx
+	if (os.streamCount == 1 || os.streamCount%50 == 0) && debugLog != nil {
+		debugLog.Printf("STREAM: call#%d len(samples)=%d pcm_available=%d pcmIdx=%d closed=%v",
+			os.streamCount, len(samples), available, os.pcmIdx, os.streamClosed)
 	}
 
-	available := len(os.pcmBuf) - os.pcmIdx
-	
 	if available <= 0 {
 		if os.streamClosed {
 			return 0, false
@@ -202,11 +225,19 @@ func (os *OpusStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 	}
 
 	hasAudio := false
+	var maxAbs int16
 	for i := 0; i < toCopy; i++ {
-		samples[i][0] = float64(os.pcmBuf[os.pcmIdx]) / 32768.0
-		samples[i][1] = float64(os.pcmBuf[os.pcmIdx+1]) / 32768.0
-		if samples[i][0] != 0 {
+		l := os.pcmBuf[os.pcmIdx]
+		r := os.pcmBuf[os.pcmIdx+1]
+		samples[i][0] = float64(l) / 32768.0
+		samples[i][1] = float64(r) / 32768.0
+		if l != 0 || r != 0 {
 			hasAudio = true
+		}
+		if l > maxAbs {
+			maxAbs = l
+		} else if -l > maxAbs {
+			maxAbs = -l
 		}
 		os.pcmIdx += 2
 	}
@@ -216,10 +247,13 @@ func (os *OpusStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 		samples[i] = [2]float64{0, 0}
 	}
 
-	if hasAudio {
-		os.streamCount++
-		if os.streamCount % 100 == 0 {
-			debugLog.Printf("STREAM: delivering audio, toCopy=%d", toCopy)
+	if hasAudio && debugLog != nil {
+		// Log the first sample we deliver, then every 50th call after.
+		if !os.firstAudioLogged {
+			os.firstAudioLogged = true
+			debugLog.Printf("STREAM: FIRST audio delivery call#%d toCopy=%d peak_int16=%d", os.streamCount, toCopy, maxAbs)
+		} else if os.streamCount%50 == 0 {
+			debugLog.Printf("STREAM: delivering audio toCopy=%d peak_int16=%d", toCopy, maxAbs)
 		}
 	}
 
