@@ -17,30 +17,31 @@ import (
 )
 
 type model struct {
-	queue          []Track
-	currentIndex   int
-	client         *youtube.Client
-	video          *youtube.Video
-	selectedFormat *youtube.Format
-	progress       progress.Model
-	currTime       time.Duration
-	totalTime      time.Duration
-	paused         bool
-	loading        bool
-	err            error
-	quitting       bool
-	ctrl           *beep.Ctrl
-	volume         *effects.Volume
-	volLevel       int // 0 to 100
-	prevVolLevel   int // To restore after unmute
-	streamer       *OpusStreamer
-	mu             sync.Mutex
-	showLyrics     bool
-	lyrics         []LyricLine
-	lyricsLoading  bool
-	showPlaylist   bool
-	manualLyricIdx int
-	playlistCursor int
+	queue           []Track
+	currentIndex    int
+	client          *youtube.Client
+	video           *youtube.Video
+	selectedFormat  *youtube.Format
+	progress        progress.Model
+	currTime        time.Duration
+	totalTime       time.Duration
+	paused          bool
+	loading         bool
+	err             error
+	quitting        bool
+	ctrl            *beep.Ctrl
+	volume          *effects.Volume
+	volLevel        int // 0 to 100
+	prevVolLevel    int // To restore after unmute
+	streamer        *OpusStreamer
+	mu              sync.Mutex
+	showLyrics      bool
+	lyrics          []LyricLine
+	lyricsLoading   bool
+	lyricsSourceIdx int // index into LyricsSources
+	showPlaylist    bool
+	manualLyricIdx  int
+	playlistCursor  int
 }
 
 type tickMsg time.Time
@@ -50,9 +51,10 @@ type videoLoadedMsg struct {
 	url            string
 }
 type lyricsMsg struct {
-	lyrics []LyricLine
-	err    error
-	url    string
+	lyrics    []LyricLine
+	err       error
+	url       string
+	sourceIdx int
 }
 type errMsg struct{ err error }
 
@@ -124,9 +126,11 @@ func (m *model) loadVideo(urlStr string) tea.Cmd {
 }
 
 func (m *model) fetchLyricsCmd(video *youtube.Video, videoURL string) tea.Cmd {
+	src := LyricsSources[m.lyricsSourceIdx]
+	srcIdx := m.lyricsSourceIdx
 	return func() tea.Msg {
-		lyrics, err := FetchLyrics(video)
-		return lyricsMsg{lyrics: lyrics, err: err, url: videoURL}
+		lyrics, err := src.Fetch(video)
+		return lyricsMsg{lyrics: lyrics, err: err, url: videoURL, sourceIdx: srcIdx}
 	}
 }
 
@@ -251,12 +255,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateTitle()
 
 	case lyricsMsg:
-		if msg.url != m.queue[m.currentIndex].URL {
+		// Drop responses from stale tracks or stale source selections — the
+		// user may have switched sources or skipped tracks while the request
+		// was in flight.
+		if msg.url != m.queue[m.currentIndex].URL || msg.sourceIdx != m.lyricsSourceIdx {
 			return m, nil
 		}
 		m.lyricsLoading = false
 		if msg.err == nil {
 			m.lyrics = msg.lyrics
+		} else {
+			m.lyrics = nil
 		}
 		return m, nil
 
@@ -282,6 +291,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "l":
 			m.showLyrics = !m.showLyrics
 			return m, nil
+		case "]":
+			if m.video == nil {
+				return m, nil
+			}
+			m.lyricsSourceIdx = (m.lyricsSourceIdx + 1) % len(LyricsSources)
+			m.lyrics = nil
+			m.lyricsLoading = true
+			m.manualLyricIdx = 0
+			return m, m.fetchLyricsCmd(m.video, m.queue[m.currentIndex].URL)
+		case "[":
+			if m.video == nil {
+				return m, nil
+			}
+			m.lyricsSourceIdx = (m.lyricsSourceIdx - 1 + len(LyricsSources)) % len(LyricsSources)
+			m.lyrics = nil
+			m.lyricsLoading = true
+			m.manualLyricIdx = 0
+			return m, m.fetchLyricsCmd(m.video, m.queue[m.currentIndex].URL)
 		case "a":
 			if m.showLyrics && len(m.lyrics) == 1 && strings.HasPrefix(m.lyrics[0].Text, "[Not Synced]") {
 				if m.manualLyricIdx > 0 {
@@ -316,6 +343,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			m.volLevel += 5
+			if m.volLevel > 100 {
+				m.volLevel = 100
+			}
+			m.updateVolume()
+			return m, nil
 		case "down":
 			if m.showPlaylist {
 				m.playlistCursor++
@@ -324,6 +357,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			m.volLevel -= 5
+			if m.volLevel < 0 {
+				m.volLevel = 0
+			}
+			m.updateVolume()
+			return m, nil
 		case "enter":
 			if m.showPlaylist {
 				return m, tea.Batch(m.gotoTrack(m.playlistCursor), m.updateTitle())
@@ -380,9 +419,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		if !m.paused && !m.quitting && !m.loading && m.video != nil {
-			m.currTime += time.Millisecond * 500
-			if m.currTime >= m.totalTime {
+		if !m.paused && !m.quitting && m.video != nil && m.streamer != nil {
+			// Source-of-truth time is what the streamer has actually delivered
+			// to the speaker. This keeps lyric sync correct across seeks
+			// (which restart the decoder) and pauses, instead of drifting
+			// from a free-running tick counter.
+			pos := m.streamer.Position()
+			if pos > 0 {
+				m.currTime = pos
+			}
+			if m.currTime >= m.totalTime && m.totalTime > 0 {
 				return m, m.nextVideo()
 			}
 		}
@@ -456,7 +502,8 @@ func (m *model) View() string {
 	)
 
 	if m.showLyrics {
-		s += "\n  LYRICS (provided by LRCLib):\n"
+		srcName := LyricsSources[m.lyricsSourceIdx].Name
+		s += fmt.Sprintf("\n  LYRICS (source: %s — `[` prev, `]` next):\n", srcName)
 		if m.lyricsLoading {
 			s += "  Loading lyrics...\n"
 		} else if len(m.lyrics) == 0 {
@@ -559,7 +606,9 @@ func (m *model) View() string {
 		}
 	}
 
-	s += "\n" + helpStyle.Render("Space: Pause • ←/→: Seek 10s • +/-: Vol • M: Mute • P: Prev • N: Next • L: Lyrics (A/D: Scroll) • R: Randomize • V: Playlist (Up/Down: Select, Enter: Play) • Q: Quit")
+	helpLine1 := "Space: Pause • ←/→: Seek 10s • ↑/↓ or +/-: Vol • M: Mute • P/N: Prev/Next"
+	helpLine2 := "L: Lyrics (A/D: Scroll, [ ]: Source) • R: Randomize • V: Playlist (↑/↓: Select, Enter: Play) • Q: Quit"
+	s += "\n" + helpStyle.Render(helpLine1) + "\n" + helpStyle.Render(helpLine2)
 
 	return s
 }

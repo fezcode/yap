@@ -66,6 +66,17 @@ type OpusStreamer struct {
 	// Start() to implement seeking by re-decoding from the beginning and
 	// discarding everything before the target time.
 	skipSamples int
+	// generation increments on every Start. Stale run() goroutines compare
+	// against this and bail before mutating pcmBuf — without it, an
+	// in-flight ebml.Unmarshal from the *previous* track keeps appending
+	// after a seek and corrupts the new playback.
+	generation int64
+	// startAt + deliveredSamples drives Position(): the wall-clock time the
+	// listener is hearing right now. Used by the UI for lyric sync that
+	// stays correct across seeks (instead of a tick timer that races
+	// ahead while the buffer is still filling).
+	startAt          time.Duration
+	deliveredSamples int64
 	firstAudioLogged bool
 }
 
@@ -89,17 +100,34 @@ func (os *OpusStreamer) Start(video *youtube.Video, format *youtube.Format, star
 	os.pcmIdx = 0
 	os.streamClosed = false
 	os.err = nil
+	os.deliveredSamples = 0
+	os.firstAudioLogged = false
 	if startAt < 0 {
 		startAt = 0
 	}
+	os.startAt = startAt
 	// 48kHz × 2 channels = 96000 int16s per second
 	os.skipSamples = int(startAt.Seconds()) * 48000 * 2
+	os.generation++
+	gen := os.generation
+	stop := os.closeChan
 	os.mu.Unlock()
 
-	go os.run(video, format, os.closeChan)
+	go os.run(video, format, stop, gen)
 }
 
-func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop chan struct{}) {
+// Position returns the wall-clock time the listener is hearing right now,
+// measured from the actual number of post-skip samples delivered to the
+// speaker. Lyric sync uses this so the highlighted line tracks audio across
+// seeks (instead of drifting based on a tick counter while the decoder is
+// still skipping ahead).
+func (os *OpusStreamer) Position() time.Duration {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	return os.startAt + time.Duration(os.deliveredSamples)*time.Second/48000
+}
+
+func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop chan struct{}, gen int64) {
 	debugLog.Printf("RUN: Getting stream URL")
 	streamURL, err := os.client.GetStreamURL(video, format)
 	if err != nil {
@@ -144,6 +172,12 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 					continue
 				}
 				os.mu.Lock()
+				if os.generation != gen {
+					// A newer Start() superseded us; drop the decoded samples
+					// instead of polluting the new playback's buffer.
+					os.mu.Unlock()
+					return
+				}
 				produced := pcm[:n*2]
 				if os.skipSamples > 0 {
 					if len(produced) <= os.skipSamples {
@@ -193,7 +227,9 @@ func (os *OpusStreamer) run(video *youtube.Video, format *youtube.Format, stop c
 	debugLog.Printf("RUN: ebml.Unmarshal finished: %v (decoded %d frames)", err, decodedFrames)
 
 	os.mu.Lock()
-	os.streamClosed = true
+	if os.generation == gen {
+		os.streamClosed = true
+	}
 	os.mu.Unlock()
 }
 
@@ -241,6 +277,7 @@ func (os *OpusStreamer) Stream(samples [][2]float64) (n int, ok bool) {
 		}
 		os.pcmIdx += 2
 	}
+	os.deliveredSamples += int64(toCopy)
 
 	// Fill remainder with silence
 	for i := toCopy; i < len(samples); i++ {
