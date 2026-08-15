@@ -8,8 +8,8 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dosgo/libopus v0.0.0-20250926174001-ab4c5823676f
-	github.com/fezcode/go-piml v1.2.1
-	github.com/fezcode/gobake v0.3.0
+	github.com/fezcode/go-piml v1.3.0
+	github.com/fezcode/gobake v0.5.0
 	github.com/gopxl/beep v1.4.1
 	github.com/kkdai/youtube/v2 v2.10.6
 )

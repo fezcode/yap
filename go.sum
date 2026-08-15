@@ -38,10 +38,10 @@ github.com/ebitengine/purego v0.7.1 h1:6/55d26lG3o9VCZX8lping+bZcmShseiqlh2bnUDi
 github.com/ebitengine/purego v0.7.1/go.mod h1:ah1In8AOtksoNK6yk5z1HTJeUkC1Ez4Wk2idgGslMwQ=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
-github.com/fezcode/go-piml v1.2.1 h1:IW71Q6vEjyzpkeMvV1wkgP8w/ucObXXF5WDEaadMQSE=
-github.com/fezcode/go-piml v1.2.1/go.mod h1:GbFMPCBsrUoNZnG3JzTr7BwbIeMucPs70LuvkgxJYdQ=
-github.com/fezcode/gobake v0.3.0 h1:wYw1EXHoUjpYXzG7MUgE5ohKxZ+XXYu2Vdf5wsKhKE8=
-github.com/fezcode/gobake v0.3.0/go.mod h1:xLBhJdcq4K9Fv2rV+hlTXnUa9sB7q/qHQfQlqfmQuWo=
+github.com/fezcode/go-piml v1.3.0 h1:YiG77ZaZG0gZejYiX1HRuPrIC6jbnwcu8FQQblSYySo=
+github.com/fezcode/go-piml v1.3.0/go.mod h1:GbFMPCBsrUoNZnG3JzTr7BwbIeMucPs70LuvkgxJYdQ=
+github.com/fezcode/gobake v0.5.0 h1:As4T9xAfZRWxPHjXCGq/wcjPXFmu9HTjLENX7ynfZeA=
+github.com/fezcode/gobake v0.5.0/go.mod h1:LaJwPyNkup25v2XijdGTc0ThurM2Di2FpD6n5Ti+/T0=
 github.com/go-sourcemap/sourcemap v2.1.4+incompatible h1:a+iTbH5auLKxaNwQFg0B+TCYl6lbukKPc7b5x0n1s6Q=
 github.com/go-sourcemap/sourcemap v2.1.4+incompatible/go.mod h1:F8jJfvm2KbVjc5NqelyYJmf/v5J0dwNLS2mL4sNA1Jg=
 github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc h1:VBbFa1lDYWEeV5FZKUiYKYT0VxCp9twUmmaq9eb8sXw=
