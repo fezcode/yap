@@ -1,8 +1,10 @@
 //go:build gobake
+
 package bake_recipe
 
 import (
 	"fmt"
+
 	"github.com/fezcode/gobake"
 )
 
@@ -18,7 +20,12 @@ func Run(bake *gobake.Engine) error {
 			os   string
 			arch string
 		}{
+			{"linux", "amd64"},
+			{"linux", "arm64"},
 			{"windows", "amd64"},
+			{"windows", "arm64"},
+			{"darwin", "amd64"},
+			{"darwin", "arm64"},
 		}
 
 		err := ctx.Mkdir("build")
@@ -29,6 +36,13 @@ func Run(bake *gobake.Engine) error {
 		ldflags := fmt.Sprintf("-X main.Version=%s", bake.Info.Version)
 
 		for _, t := range targets {
+			// The audio backend on Linux is ALSA through oto, which needs cgo, so this target cannot be cross-compiled with
+			// CGO disabled. Build it on a Linux machine instead of failing here.
+			if t.os == "linux" {
+				ctx.Log("Skipping %s/%s: ALSA needs cgo (build on Linux)", t.os, t.arch)
+				continue
+			}
+
 			output := "build/" + bake.Info.Name + "-" + t.os + "-" + t.arch
 			if t.os == "windows" {
 				output += ".exe"
@@ -40,6 +54,7 @@ func Run(bake *gobake.Engine) error {
 				"GOARCH=" + t.arch,
 			}
 
+			// We use manual go build to inject ldflags
 			err := ctx.Run("go", "build", "-ldflags", ldflags, "-o", output, "./src")
 			if err != nil {
 				return err

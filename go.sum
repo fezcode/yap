@@ -34,8 +34,8 @@ github.com/dosgo/libopus v0.0.0-20250926174001-ab4c5823676f h1:bIcfwoNZFuBzq1q39
 github.com/dosgo/libopus v0.0.0-20250926174001-ab4c5823676f/go.mod h1:/mcWRks3r8UuAwAEsifqAXrj45vp2R1OFIXYyoyw16E=
 github.com/ebitengine/oto/v3 v3.1.0 h1:9tChG6rizyeR2w3vsygTTTVVJ9QMMyu00m2yBOCch6U=
 github.com/ebitengine/oto/v3 v3.1.0/go.mod h1:IK1QTnlfZK2GIB6ziyECm433hAdTaPpOsGMLhEyEGTg=
-github.com/ebitengine/purego v0.7.1 h1:6/55d26lG3o9VCZX8lping+bZcmShseiqlh2bnUDiPA=
-github.com/ebitengine/purego v0.7.1/go.mod h1:ah1In8AOtksoNK6yk5z1HTJeUkC1Ez4Wk2idgGslMwQ=
+github.com/ebitengine/purego v0.11.0 h1:jhp/D+Nyv7UUW8HAcmcjt2N2rYrYi9m3SL21k0Ua/NI=
+github.com/ebitengine/purego v0.11.0/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/fezcode/go-piml v1.3.0 h1:YiG77ZaZG0gZejYiX1HRuPrIC6jbnwcu8FQQblSYySo=
